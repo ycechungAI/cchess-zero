@@ -1,7 +1,5 @@
 from ChessBoard import *
-from ChessView import ChessView
 from main import *
-import tkinter
 
 def real_coord(x):
     if x <= 50:
@@ -23,18 +21,22 @@ class ChessGame:
     time_green = []
 
     def __init__(self, in_ai_count, in_ai_function, in_play_playout, in_delay, in_end_delay, batch_size, search_threads,
-                 processor, num_gpus, res_block_nums, human_color = "b"):
+                 processor, num_gpus, res_block_nums, human_color = "b", no_gui=False):
         self.human_color = human_color
         self.current_player = "w"
         self.players = {}
         self.players[self.human_color] = "human"
         ai_color = "w" if self.human_color == "b" else "b"
         self.players[ai_color] = "AI"
+        self.no_gui = no_gui
 
         ChessGame.board = ChessBoard(self.human_color == 'b')
-        self.view = ChessView(self, board=ChessGame.board)
-        self.view.showMsg("Loading Models...")    #"Red"    player_color
-        self.view.draw_board(self.board)
+        if not self.no_gui:
+            from ChessView import ChessView
+            import tkinter
+            self.view = ChessView(self, board=ChessGame.board)
+            self.view.showMsg("Loading Models...")    #"Red"    player_color
+            self.view.draw_board(self.board)
         ChessGame.game_mode = in_ai_count
         self.ai_function = in_ai_function
         self.play_playout = in_play_playout
@@ -45,7 +47,8 @@ class ChessGame:
         self.win_rate['w'] = 0.0
         self.win_rate['b'] = 0.0
 
-        self.view.root.update()
+        if not self.no_gui:
+            self.view.root.update()
         self.cchess_engine = cchess_main(playout=self.play_playout, in_batch_size=batch_size, exploration=False, in_search_threads=search_threads,
                                          processor=processor, num_gpus=num_gpus, res_block_nums=res_block_nums, human_color=human_color)
 
@@ -53,23 +56,32 @@ class ChessGame:
         return self.current_player == "w"
 
     def start(self):
-        # below added by Fei Li
-        self.view.showMsg("Red")
-        if self.game_mode == 1:
-            print ('-----Round %d-----' % self.cur_round)
-            if self.players["w"] == "AI":
+        if not self.no_gui:
+            # below added by Fei Li
+            self.view.showMsg("Red")
+            if self.game_mode == 1:
+                print ('-----Round %d-----' % self.cur_round)
+                if self.players["w"] == "AI":
+                    self.win_rate['w'] = self.perform_AI()
+                    self.view.draw_board(self.board)
+                    self.change_player()
+            elif self.game_mode == 2:
+                print('-----Round %d-----' % self.cur_round)
                 self.win_rate['w'] = self.perform_AI()
                 self.view.draw_board(self.board)
-                self.change_player()
-        elif self.game_mode == 2:
-            print('-----Round %d-----' % self.cur_round)
-            self.win_rate['w'] = self.perform_AI()
-            self.view.draw_board(self.board)
 
-        self.view.start()
+            self.view.start()
+        else:
+            self.start_no_gui()
+
+    def start_no_gui(self):
+        while not self.check_end():
+            self.perform_AI()
+            self.change_player()
 
     def disp_mcts_msg(self):
-        self.view.showMsg("MCTS Searching...")
+        if not self.no_gui:
+            self.view.showMsg("MCTS Searching...")
 
     def callback(self, event):
         if self.game_mode == 1 and self.players[self.current_player] == "AI":
@@ -109,21 +121,23 @@ class ChessGame:
     # below added by Fei Li
 
     def quit(self):
-        time.sleep(self.end_delay)
-        self.view.quit()
+        if not self.no_gui:
+            time.sleep(self.end_delay)
+            self.view.quit()
 
     def check_end(self):
         ret, winner = self.cchess_engine.check_end()
         if ret == True:
-            if winner == "b":
-                self.view.showMsg('*****Green Wins at Round %d*****' % self.cur_round)
-                self.view.root.update()
-            elif winner == "w":
-                self.view.showMsg('*****Red Wins at Round %d*****' % self.cur_round)
-                self.view.root.update()
-            elif winner == "t":
-                self.view.showMsg('*****Draw at Round %d*****' % self.cur_round)
-                self.view.root.update()
+            if not self.no_gui:
+                if winner == "b":
+                    self.view.showMsg('*****Green Wins at Round %d*****' % self.cur_round)
+                    self.view.root.update()
+                elif winner == "w":
+                    self.view.showMsg('*****Red Wins at Round %d*****' % self.cur_round)
+                    self.view.root.update()
+                elif winner == "t":
+                    self.view.showMsg('*****Draw at Round %d*****' % self.cur_round)
+                    self.view.root.update()
         return ret
 
     def _check_end(self, board):
@@ -159,12 +173,13 @@ class ChessGame:
         green_msg = " ({:.4f})".format(self.win_rate['b'])
         sorted_move_probs = self.cchess_engine.get_hint(self.ai_function, True, self.disp_mcts_msg)
         # print(sorted_move_probs)
-        self.view.print_all_hint(sorted_move_probs)
-        # self.move_images.append(tkinter.PhotoImage(file="images/OOS.gif"))
-        # self.can.create_image(board_coord(x), board_coord(y), image=self.move_images[-1])
+        if not self.no_gui:
+            self.view.print_all_hint(sorted_move_probs)
+            # self.move_images.append(tkinter.PhotoImage(file="images/OOS.gif"))
+            # self.can.create_image(board_coord(x), board_coord(y), image=self.move_images[-1])
 
-        self.view.showMsg("Red" + red_msg + " Green" + green_msg if self.current_player == "w" else "Green" + green_msg + " Red" + red_msg)
-        self.view.root.update()
+            self.view.showMsg("Red" + red_msg + " Green" + green_msg if self.current_player == "w" else "Green" + green_msg + " Red" + red_msg)
+            self.view.root.update()
         # if self.game_mode == 0:
         #     return False
         if self.game_mode == 1:
@@ -182,9 +197,9 @@ class ChessGame:
 
     def perform_AI(self):
         print ('...AI is calculating...')
-        START_TIME = time.clock()
+        START_TIME = time.perf_counter()
         move, win_rate = self.cchess_engine.select_move(self.ai_function)
-        time_used = time.clock() - START_TIME
+        time_used = time.perf_counter() - START_TIME
         print ('...Use %fs...' % time_used)
         if self.current_player == "w":
             self.time_red.append(time_used)
@@ -197,11 +212,9 @@ class ChessGame:
     # AI VS AI mode
     def game_mode_2(self):
         self.change_player()
-        self.view.draw_board(self.board)
-        self.view.root.update()
+        if not self.no_gui:
+            self.view.draw_board(self.board)
+            self.view.root.update()
         if self.check_end():
             return True
         return False
-
-# game = ChessGame()
-# game.start()

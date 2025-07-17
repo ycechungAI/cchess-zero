@@ -15,7 +15,6 @@ import argparse
 from collections import deque, defaultdict, namedtuple
 import copy
 from policy_value_network import *
-from policy_value_network_gpus import *
 import scipy.stats
 from threading import Lock
 from concurrent.futures import ThreadPoolExecutor
@@ -125,56 +124,17 @@ class leaf_node(object):
         self.U = c_puct * self.P * np.sqrt(self.parent.N) / ( 1 + self.N)
         return self.Q + self.U
 
-    # def select_move_by_action_score(self, noise=True):
-    #
-    #     # P = params[self.lookup['P']]
-    #     # N = params[self.lookup['N']]
-    #     # Q = params[self.lookup['W']] / (N + 1e-8)
-    #     # U = c_PUCT * P * np.sqrt(np.sum(N)) / (1 + N)
-    #
-    #     ret_a = None
-    #     ret_n = None
-    #     action_idx = {}
-    #     action_score = []
-    #     i = 0
-    #     for a, n in self.child.items():
-    #         U = c_PUCT * n.P * np.sqrt(n.parent.N) / ( 1 + n.N)
-    #         action_idx[i] = (a, n)
-    #
-    #         if noise:
-    #             action_score.append(n.Q + U * (0.75 * n.P + 0.25 * dirichlet([.03] * (go.N ** 2 + 1))) / (n.P + 1e-8))
-    #         else:
-    #             action_score.append(n.Q + U)
-    #         i += 1
-    #         # if(n.Q + n.U > max_Q_plus_U):
-    #         #     max_Q_plus_U = n.Q + n.U
-    #         #     ret_a = a
-    #         #     ret_n = n
-    #
-    #     action_t = int(np.argmax(action_score[:-1]))
-    #
-    #     return ret_a, ret_n
-    #     # return action_t
     def select_new(self, c_puct):
         return max(self.child.items(), key=lambda node: node[1].get_Q_plus_U_new(c_puct))
 
     def select(self, c_puct):
-        # max_Q_plus_U = 1e-10
-        # ret_a = None
-        # ret_n = None
-        # for a, n in self.child.items():
-        #     n.U = c_puct * n.P * np.sqrt(n.parent.N) / ( 1 + n.N)
-        #     if(n.Q + n.U > max_Q_plus_U):
-        #         max_Q_plus_U = n.Q + n.U
-        #         ret_a = a
-        #         ret_n = n
-        # return ret_a, ret_n
         return max(self.child.items(), key=lambda node: node[1].get_Q_plus_U(c_puct))
 
     #@profile
     def expand(self, moves, action_probs):
         tot_p = 1e-8
-        action_probs = action_probs.flatten()   #.squeeze()
+        # print("action_probs : ", action_probs)
+        action_probs = tf.squeeze(action_probs)  #.flatten()   #.squeeze()
         # print("expand action_probs shape : ", action_probs.shape)
         for action in moves:
             in_state = GameBoard.sim_do_action(action, self.state)
@@ -277,59 +237,6 @@ class MCTS_tree(object):
         # else:
         #     self.root = leaf_node(None, self.p_, in_state)
 
-
-    # def do_simulation(self, state, current_player, restrict_round):
-    #     node = self.root
-    #     last_state = state
-    #     while(node.is_leaf() == False):
-    #         # print("do_simulation while current_player : ", current_player)
-    #         with self.node_lock[node]:
-    #             action, node = node.select(self.c_puct)
-    #         current_player = "w" if current_player == "b" else "b"
-    #         if is_kill_move(last_state, node.state) == 0:
-    #             restrict_round += 1
-    #         else:
-    #             restrict_round = 0
-    #         last_state = node.state
-    #
-    #     positions = self.generate_inputs(node.state, current_player)
-    #     positions = np.expand_dims(positions, 0)
-    #     action_probs, value = self.forward(positions)
-    #     if self.is_black_turn(current_player):
-    #         action_probs = cchess_main.flip_policy(action_probs)
-    #
-    #     # print("action_probs shape : ", action_probs.shape)    #(1, 2086)
-    #     with self.node_lock[node]:
-    #         if(node.state.find('K') == -1 or node.state.find('k') == -1):
-    #             if (node.state.find('K') == -1):
-    #                 value = 1.0 if current_player == "b" else -1.0
-    #             if (node.state.find('k') == -1):
-    #                 value = -1.0 if current_player == "b" else 1.0
-    #         elif restrict_round >= 60:
-    #             value = 0.0
-    #         else:
-    #             moves = GameBoard.get_legal_moves(node.state, current_player)
-    #             # print("current_player : ", current_player)
-    #             # print(moves)
-    #             node.expand(moves, action_probs)
-    #
-    #         # if(node.parent != None):
-    #         #     node.parent.N += self.virtual_loss
-    #         node.N += self.virtual_loss
-    #         node.W += -self.virtual_loss
-    #         node.Q = node.W / node.N
-    #
-    #     # time.sleep(0.1)
-    #
-    #     with self.node_lock[node]:
-    #         # if(node.parent != None):
-    #         #     node.parent.N += -self.virtual_loss# + 1
-    #         node.N += -self.virtual_loss# + 1
-    #         node.W += self.virtual_loss# + leaf_v
-    #         # node.Q = node.W / node.N
-    #
-    #         node.backup(-value)
-
     def is_expanded(self, key) -> bool:
         """Check expanded status"""
         return key in self.expanded
@@ -339,7 +246,7 @@ class MCTS_tree(object):
         self.running_simulation_num += 1
 
         # reduce parallel search number
-        with await self.sem:
+        async with self.sem:
             value = await self.start_tree_search(node, current_player, restrict_round)
             # logger.debug(f"value: {value}")
             # logger.debug(f'Current running threads : {RUNNING_SIMULATION_NUM}')
@@ -416,28 +323,14 @@ class MCTS_tree(object):
                 value = 0.0
             else:
                 value = await self.start_tree_search(node, current_player, restrict_round)  # next move
-            # if node is not None:
-            #     value = await self.start_tree_search(node)  # next move
-            # else:
-            #     # None position means illegal move
-            #     value = -1
 
-            # self.virtual_loss_undo(key, action_t)
             node.N += -virtual_loss
             node.W += virtual_loss
 
-            # on returning search path
-            # update: N, W, Q, U
-            # self.back_up_value(key, action_t, value)
             node.back_up_value(value)    # -value
 
             # must invert
             return value * -1
-            # if child_position is not None:
-            #     return value * -1
-            # else:
-            #     # illegal move doesn't mean much for the opponent
-            #     return 0
 
     async def prediction_worker(self):
         """For better performance, queueing prediction requests and predict together in this worker.
@@ -454,11 +347,6 @@ class MCTS_tree(object):
             item_list = [q.get_nowait() for _ in range(q.qsize())]  # type: list[QueueItem]
             #logger.debug(f"predicting {len(item_list)} items")
             features = np.asarray([item.feature for item in item_list])    # asarray
-            # print("prediction_worker [features.shape] before : ", features.shape)
-            # shape = features.shape
-            # features = features.reshape((shape[0] * shape[1], shape[2], shape[3], shape[4]))
-            # print("prediction_worker [features.shape] after : ", features.shape)
-            # policy_ary, value_ary = self.run_many(features)
             action_probs, value = self.forward(features)
             for p, v, item in zip(action_probs, value, item_list):
                 item.future.set_result((p, v))
@@ -588,19 +476,6 @@ class GameBoard(object):
         self.current_player = "w"
         self.restrict_round = 0
 
-# 小写表示黑方，大写表示红方
-# [
-#     "rheakaehr",
-#     "         ",
-#     " c     c ",
-#     "p p p p p",
-#     "         ",
-#     "         ",
-#     "P P P P P",
-#     " C     C ",
-#     "         ",
-#     "RHEAKAEHR"
-# ]
     def reload(self):
         self.state = "RNBAKABNR/9/1C5C1/P1P1P1P1P/9/9/p1p1p1p1p/1c5c1/9/rnbakabnr"#"rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR"    #
         self.round = 1
@@ -656,37 +531,17 @@ class GameBoard(object):
         dst_x = int(x_trans[dst[0]])
         dst_y = int(dst[1])
 
-        # GameBoard.print_borad(in_state)
-        # print("sim_do_action : ", in_action)
-        # print(dst_y, dst_x, src_y, src_x)
         board_positions = GameBoard.board_to_pos_name(in_state)
         line_lst = []
         for line in board_positions:
             line_lst.append(list(line))
         lines = np.array(line_lst)
-        # print(lines.shape)
-        # print(board_positions[src_y])
-        # print("before board_positions[dst_y] = ",board_positions[dst_y])
 
         lines[dst_y][dst_x] = lines[src_y][src_x]
         lines[src_y][src_x] = '1'
 
         board_positions[dst_y] = ''.join(lines[dst_y])
         board_positions[src_y] = ''.join(lines[src_y])
-
-        # src_str = list(board_positions[src_y])
-        # dst_str = list(board_positions[dst_y])
-        # print("src_str[src_x] = ", src_str[src_x])
-        # print("dst_str[dst_x] = ", dst_str[dst_x])
-        # c = copy.deepcopy(src_str[src_x])
-        # dst_str[dst_x] = c
-        # src_str[src_x] = '1'
-        # board_positions[dst_y] = ''.join(dst_str)
-        # board_positions[src_y] = ''.join(src_str)
-        # print("after board_positions[dst_y] = ", board_positions[dst_y])
-
-        # board_positions[dst_y][dst_x] = board_positions[src_y][src_x]
-        # board_positions[src_y][src_x] = '1'
 
         board = "/".join(board_positions)
         board = board.replace("111111111", "9")
@@ -698,7 +553,6 @@ class GameBoard(object):
         board = board.replace("111", "3")
         board = board.replace("11", "2")
 
-        # GameBoard.print_borad(board)
         return board
 
     @staticmethod
@@ -1138,20 +992,20 @@ class cchess_main(object):
         self.buffer_size = 10000
         self.data_buffer = deque(maxlen=self.buffer_size)
         self.game_borad = GameBoard()
+        self.processor = processor
         # self.current_player = 'w'    #“w”表示红方，“b”表示黑方。
-        self.policy_value_netowrk = policy_value_network(res_block_nums) if processor == 'cpu' else policy_value_network_gpus(num_gpus, res_block_nums)
+        self.policy_value_netowrk = policy_value_network(lambda: self.learning_rate * self.lr_multiplier, res_block_nums) if processor == 'cpu' else policy_value_network_gpus(num_gpus, res_block_nums)
         self.search_threads = in_search_threads
         self.mcts = MCTS_tree(self.game_borad.state, self.policy_value_netowrk.forward, self.search_threads)
         self.exploration = exploration
         self.resign_threshold = -0.8    #0.05
         self.global_step = 0
         self.kl_targ = 0.025
-        self.log_file = open(os.path.join(os.getcwd(), 'log_file.txt'), 'w')
         self.human_color = human_color
 
     @staticmethod
     def flip_policy(prob):
-        prob = prob.flatten()
+        prob = tf.squeeze(prob) # .flatten()
         return np.asarray([prob[ind] for ind in unflipped_index])
 
     def policy_update(self):
@@ -1161,19 +1015,33 @@ class cchess_main(object):
         state_batch = [data[0] for data in mini_batch]
         mcts_probs_batch = [data[1] for data in mini_batch]
         winner_batch = [data[2] for data in mini_batch]
-        # print(np.array(winner_batch).shape)
-        # print(winner_batch)
+
         winner_batch = np.expand_dims(winner_batch, 1)
-        # print(winner_batch.shape)
-        # print(winner_batch)
+
         start_time = time.time()
         old_probs, old_v = self.mcts.forward(state_batch)
         for i in range(self.epochs):
-            accuracy, loss, self.global_step = self.policy_value_netowrk.train_step(state_batch, mcts_probs_batch, winner_batch,
-                                                             self.learning_rate * self.lr_multiplier)    #
+            # print("tf.executing_eagerly() : ", tf.executing_eagerly())
+            state_batch = np.array(state_batch)
+            if len(state_batch.shape) == 3:
+                sp = state_batch.shape
+                state_batch = np.reshape(state_batch, [1, sp[0], sp[1], sp[2]])
+            if self.processor == 'cpu':
+                accuracy, loss, self.global_step = self.policy_value_netowrk.train_step(state_batch, mcts_probs_batch, winner_batch,
+                                                                 self.learning_rate * self.lr_multiplier)    #
+            else:
+                # import pickle
+                # pickle.dump((state_batch, mcts_probs_batch, winner_batch, self.learning_rate * self.lr_multiplier), open('preprocess.p', 'wb'))
+                with self.policy_value_netowrk.strategy.scope():
+                    train_dataset = tf.data.Dataset.from_tensor_slices((state_batch, mcts_probs_batch, winner_batch)).batch(len(winner_batch))  # , self.learning_rate * self.lr_multiplier
+                        # .shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
+                    train_iterator = self.policy_value_netowrk.strategy.make_dataset_iterator(train_dataset)
+                    train_iterator.initialize()
+                    accuracy, loss, self.global_step = self.policy_value_netowrk.distributed_train(train_iterator)
+
             new_probs, new_v = self.mcts.forward(state_batch)
             kl_tmp = old_probs * (np.log((old_probs + 1e-10) / (new_probs + 1e-10)))
-            # print("kl_tmp.shape", kl_tmp.shape)
+
             kl_lst = []
             for line in kl_tmp:
                 # print("line.shape", line.shape)
@@ -1194,32 +1062,11 @@ class cchess_main(object):
         elif kl < self.kl_targ / 2 and self.lr_multiplier < 10:
             self.lr_multiplier *= 1.5
 
-        explained_var_old = 1 - np.var(np.array(winner_batch) - old_v.flatten()) / np.var(np.array(winner_batch))
-        explained_var_new = 1 - np.var(np.array(winner_batch) - new_v.flatten()) / np.var(np.array(winner_batch))
+        explained_var_old = 1 - np.var(np.array(winner_batch) - tf.squeeze(old_v)) / np.var(np.array(winner_batch)) # .flatten()
+        explained_var_new = 1 - np.var(np.array(winner_batch) - tf.squeeze(new_v)) / np.var(np.array(winner_batch)) # .flatten()
         print(
             "kl:{:.5f},lr_multiplier:{:.3f},loss:{},accuracy:{},explained_var_old:{:.3f},explained_var_new:{:.3f}".format(
                 kl, self.lr_multiplier, loss, accuracy, explained_var_old, explained_var_new))
-        self.log_file.write("kl:{:.5f},lr_multiplier:{:.3f},loss:{},accuracy:{},explained_var_old:{:.3f},explained_var_new:{:.3f}".format(
-                kl, self.lr_multiplier, loss, accuracy, explained_var_old, explained_var_new) + '\n')
-        self.log_file.flush()
-        # return loss, accuracy
-
-    # def policy_evaluate(self, n_games=10):
-    #     """
-    #     Evaluate the trained policy by playing games against the pure MCTS player
-    #     Note: this is only for monitoring the progress of training
-    #     """
-    #     # current_mcts_player = MCTSPlayer(self.policy_value_net.policy_value_fn, c_puct=self.c_puct,
-    #     #                                  n_playout=self.n_playout)
-    #     # pure_mcts_player = MCTS_Pure(c_puct=5, n_playout=self.pure_mcts_playout_num)
-    #     win_cnt = defaultdict(int)
-    #     for i in range(n_games):
-    #         winner = self.game.start_play(start_player=i % 2)    #current_mcts_player, pure_mcts_player,
-    #         win_cnt[winner] += 1
-    #     win_ratio = 1.0 * (win_cnt[1] + 0.5 * win_cnt[-1]) / n_games
-    #     print("num_playouts:{}, win: {}, lose: {}, tie:{}".format(self.pure_mcts_playout_num, win_cnt[1], win_cnt[2],
-    #                                                               win_cnt[-1]))
-    #     return win_ratio
 
     def run(self):
         #self.game_loop
@@ -1244,36 +1091,7 @@ class cchess_main(object):
                 #     print("current self-play batch: {}".format(batch_iter))
                 #     win_ratio = self.policy_evaluate()
         except KeyboardInterrupt:
-            self.log_file.close()
             self.policy_value_netowrk.save(self.global_step)
-
-    # def get_action(self, state, temperature = 1e-3):
-    #     # for i in range(self.playout_counts):
-    #     #     state_sim = copy.deepcopy(state)
-    #     #     self.mcts.do_simulation(state_sim, self.game_borad.current_player, self.game_borad.restrict_round)
-    #
-    #     futures = []
-    #     with ThreadPoolExecutor(max_workers=self.search_threads) as executor:
-    #         for _ in range(self.playout_counts):
-    #             state_sim = copy.deepcopy(state)
-    #             futures.append(executor.submit(self.mcts.do_simulation, state_sim, self.game_borad.current_player, self.game_borad.restrict_round))
-    #
-    #     vals = [f.result() for f in futures]
-    #
-    #     actions_visits = [(act, nod.N) for act, nod in self.mcts.root.child.items()]
-    #     actions, visits = zip(*actions_visits)
-    #     probs = softmax(1.0 / temperature * np.log(visits))    #+ 1e-10
-    #     move_probs = []
-    #     move_probs.append([actions, probs])
-    #
-    #     if(self.exploration):
-    #         act = np.random.choice(actions, p=0.75 * probs + 0.25*np.random.dirichlet(0.3*np.ones(len(probs))))
-    #     else:
-    #         act = np.random.choice(actions, p=probs)
-    #
-    #     self.mcts.update_tree(act)
-    #
-    #     return act, move_probs
 
     def get_hint(self, mcts_or_net, reverse, disp_mcts_msg_handler):
 
@@ -1307,7 +1125,7 @@ class cchess_main(object):
             moves = GameBoard.get_legal_moves(self.game_borad.state, self.game_borad.current_player)
 
             tot_p = 1e-8
-            action_probs = action_probs.flatten()  # .squeeze()
+            action_probs = tf.squeeze(action_probs)  # .flatten()  # .squeeze()
             act_prob_dict = defaultdict(float)
             # print("expand action_probs shape : ", action_probs.shape)
             for action in moves:
@@ -1444,7 +1262,7 @@ class cchess_main(object):
             moves = GameBoard.get_legal_moves(self.game_borad.state, self.game_borad.current_player)
 
             tot_p = 1e-8
-            action_probs = action_probs.flatten()  # .squeeze()
+            action_probs = tf.squeeze(action_probs)  # .flatten()  # .squeeze()
             act_prob_dict = defaultdict(float)
             # print("expand action_probs shape : ", action_probs.shape)
             for action in moves:
@@ -1572,6 +1390,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_gpus', default=1, type=int, help='gpu counts')
     parser.add_argument('--res_block_nums', default=7, type=int, help='res_block_nums')
     parser.add_argument('--human_color', default='b', choices=['w', 'b'], type=str, help='w or b')
+    parser.add_argument('--no-gui', action='store_true', help='run without gui')
     args = parser.parse_args()
 
     if args.mode == 'train':
@@ -1580,5 +1399,5 @@ if __name__ == '__main__':
     elif args.mode == 'play':
         from ChessGame import *
         game = ChessGame(args.ai_count, args.ai_function, args.play_playout, args.delay, args.end_delay, args.batch_size,
-                         args.search_threads, args.processor, args.num_gpus, args.res_block_nums, args.human_color)    # * args.num_gpus
+                         args.search_threads, args.processor, args.num_gpus, args.res_block_nums, args.human_color, args.no_gui)    # * args.num_gpus
         game.start()
